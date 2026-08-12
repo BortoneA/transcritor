@@ -1,0 +1,8 @@
+{
+  "name": "Gemini AI Transcriber",
+  "description": "A modern web application that transcribes audio files using the Gemini 2.5 Flash model.",
+  "requestFramePermissions": [
+    "microphone",
+    "display-capture"
+  ]
+}
