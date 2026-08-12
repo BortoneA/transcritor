@@ -321,6 +321,7 @@ app.post('/api-proxy', async (req, res) => {
     console.error(error)
     res.status(500).json({ error: error });
   }
+});
 
 // --- AssemblyAI Proxy endpoints ---
 
@@ -623,7 +624,6 @@ Mantenha as regras originais de formatação (tópicos, primeira pessoa, etc).
     console.error('Error editing medical record:', error);
     res.status(500).json({ error: error.message });
   }
-});
 });
 
 const server = app.listen(PORT, API_BACKEND_HOST, () => {
