@@ -4,29 +4,40 @@
  * Copyright 2025 Google LLC
  * SPDX-License-Identifier: Apache-2.0
  */
-import 'dotenv/config';
+import dotenv from 'dotenv';
+import fs from 'fs';
+import path from 'path';
 import express from 'express';
 import { GoogleAuth } from 'google-auth-library';
-import fetch from 'node-fetch';
 import rateLimit from 'express-rate-limit';
 import { WebSocketServer, WebSocket } from 'ws';
 
+// Carrega .env.local prioritariamente ou .env se existir
+if (fs.existsSync('.env.local')) {
+  dotenv.config({ path: '.env.local' });
+} else if (fs.existsSync('.env')) {
+  dotenv.config({ path: '.env' });
+} else if (fs.existsSync(path.resolve('..', '.env.local'))) {
+  dotenv.config({ path: path.resolve('..', '.env.local') });
+} else if (fs.existsSync(path.resolve('..', '.env'))) {
+  dotenv.config({ path: path.resolve('..', '.env') });
+} else {
+  dotenv.config();
+}
+
 const app = express();
-app.use(express.json({limit: process?.env?.API_PAYLOAD_MAX_SIZE || "7mb"}));
+app.use(express.json({limit: process?.env?.API_PAYLOAD_MAX_SIZE || "50mb"}));
 
 const PORT = process?.env?.API_BACKEND_PORT || 5000;
 const API_BACKEND_HOST = process?.env?.API_BACKEND_HOST || "127.0.0.1";
 
 const GOOGLE_CLOUD_LOCATION = process?.env?.GOOGLE_CLOUD_LOCATION;
 const GOOGLE_CLOUD_PROJECT = process?.env?.GOOGLE_CLOUD_PROJECT;
-if (!GOOGLE_CLOUD_PROJECT || !GOOGLE_CLOUD_LOCATION) {
-  console.error("Error: Environment variables GOOGLE_CLOUD_PROJECT and GOOGLE_CLOUD_LOCATION must be set.");
-  process.exit(1);
-}
 const PROXY_HEADER = process?.env?.PROXY_HEADER;
-if (!PROXY_HEADER) {
-  console.error("Error: Environment variables PROXY_HEADER must be set.");
-  process.exit(1);
+
+if (!GOOGLE_CLOUD_PROJECT || !GOOGLE_CLOUD_LOCATION || !PROXY_HEADER) {
+  console.log("[Info] Credenciais do Google Cloud / Vertex AI Studio não configuradas completamente.");
+  console.log("[Info] Os endpoints /api/assembly/*, /api/transcribe/* e /api/llm/* (Gemini e OpenRouter) funcionarão normalmente.");
 }
 
 app.set('trust proxy', 1 /* number of proxies between user and server */);
@@ -184,6 +195,10 @@ function getRequestHeaders(accessToken) {
 
 // --- Proxy Endpoint ---
 app.post('/api-proxy', async (req, res) => {
+
+  if (!PROXY_HEADER || !GOOGLE_CLOUD_PROJECT || !GOOGLE_CLOUD_LOCATION) {
+    return res.status(503).json({ error: 'Configurações de Google Cloud/Vertex AI ausentes no servidor.' });
+  }
 
   // Check for the custom header added by the shim
   if (req.headers['x-app-proxy'] !== PROXY_HEADER) {
@@ -417,18 +432,25 @@ app.post('/api/assembly/upload', express.raw({ type: '*/*', limit: '50mb' }), as
 
 app.post('/api/assembly/transcript', express.json(), async (req, res) => {
   try {
-    const { audio_url, language_code, keyIndex } = req.body;
+    const { audio_url, language_code, keyIndex, speaker_labels, speakers_expected } = req.body;
     const startIdx = parseInt(keyIndex, 10) || 0;
+
+    const payload = {
+      audio_url,
+      language_code: language_code || 'pt',
+      speaker_labels: speaker_labels !== false, // Ativa identificação de interlocutores por padrão
+    };
+
+    if (speakers_expected) {
+      payload.speakers_expected = Number(speakers_expected);
+    }
 
     const { response, data, keyIndex: finalKeyIndex } = await fetchAssemblyAI('/transcript', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({
-        audio_url,
-        language_code,
-      }),
+      body: JSON.stringify(payload),
     }, startIdx);
 
     if (!response.ok) {
@@ -463,6 +485,91 @@ app.get('/api/assembly/transcript/:id', async (req, res) => {
   } catch (error) {
     console.error('Error in AssemblyAI transcript poll proxy:', error);
     res.status(500).json({ error: error.message });
+  }
+});
+
+// --- Direct Multimodal Gemini Audio Transcription Endpoint ---
+app.post('/api/transcribe/gemini', express.json({ limit: '50mb' }), async (req, res) => {
+  try {
+    const { audioBase64, mimeType, language } = req.body;
+    if (!audioBase64) {
+      return res.status(400).json({ error: 'Nenhum áudio (base64) foi enviado.' });
+    }
+
+    const key = process.env.GEMINI_API_KEY;
+    if (!key) {
+      return res.status(400).json({ error: 'GEMINI_API_KEY não configurada no servidor backend.' });
+    }
+
+    const langMap = {
+      pt: 'Português do Brasil',
+      en: 'Inglês',
+      es: 'Espanhol',
+      fr: 'Francês'
+    };
+    const targetLang = langMap[language] || 'Português do Brasil';
+
+    const transcriptionPrompt = `Você é um transcritor médico e clínico de altíssima precisão.
+Transcreva fielmente na íntegra todo o áudio anexo em ${targetLang}.
+
+REGRAS:
+1. Transcrição Fiel: Transcreva tudo o que for dito, mantendo fidelidade absoluta às palavras dos interlocutores.
+2. Identificação de Falantes (Diarização): Como se trata de um diálogo ou consulta médica, identifique as trocas de interlocutores separando os blocos com marcadores, por exemplo:
+[Falante A]: fala aqui...
+[Falante B]: fala aqui...
+(Se ficar inequívoco pelo contexto quem é o médico e o paciente, pode utilizar [Médico]: e [Paciente]:).
+3. Correção Fonética de Termos Médicos: Padronize termos médicos, anatômicos, sinais vitais e nomes de fármacos/medicamentos comuns com grafia correta.
+4. Resposta Limpa: Retorne APENAS o texto da transcrição. Sem introdução, comentários, explicações ou notas adicionais.`;
+
+    const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
+
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        contents: [
+          {
+            role: 'user',
+            parts: [
+              {
+                inline_data: {
+                  mime_type: mimeType || 'audio/webm',
+                  data: audioBase64
+                }
+              },
+              {
+                text: transcriptionPrompt
+              }
+            ]
+          }
+        ],
+        generationConfig: {
+          temperature: 0.1
+        }
+      })
+    });
+
+    const data = await response.json();
+    if (!response.ok) {
+      console.error('Gemini direct transcription error:', data);
+      return res.status(response.status).json({
+        error: data.error?.message || `Erro na API Gemini: ${response.statusText}`
+      });
+    }
+
+    const candidate = data.candidates?.[0];
+    const text = candidate?.content?.parts?.map(p => p.text).join('') || '';
+
+    if (!text) {
+      return res.status(500).json({ error: 'A IA Gemini não gerou conteúdo transcrito para este arquivo de áudio.' });
+    }
+
+    res.json({ text });
+  } catch (error) {
+    console.error('Error in Gemini direct transcription:', error);
+    res.status(500).json({ error: error.message || 'Erro inesperado na transcrição com Gemini.' });
   }
 });
 

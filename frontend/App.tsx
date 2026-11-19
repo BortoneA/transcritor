@@ -15,11 +15,23 @@ export default function App() {
   // Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(() => {
+    const savedPromptVersion = localStorage.getItem('custom_prompt_version');
+    const hasCustomPrompt = localStorage.getItem('custom_ai_prompt');
+    const currentPrompt = (!hasCustomPrompt || savedPromptVersion !== 'v3_fewshot_gold')
+      ? DEFAULT_SYSTEM_INSTRUCTION
+      : hasCustomPrompt;
+
+    if (savedPromptVersion !== 'v3_fewshot_gold') {
+      localStorage.setItem('custom_prompt_version', 'v3_fewshot_gold');
+      localStorage.setItem('custom_ai_prompt', DEFAULT_SYSTEM_INSTRUCTION);
+    }
+
     return {
       language: localStorage.getItem('transcription_lang') || 'pt',
-      customPrompt: localStorage.getItem('custom_ai_prompt') || DEFAULT_SYSTEM_INSTRUCTION,
+      customPrompt: currentPrompt,
       aiProvider: (localStorage.getItem('ai_provider') as 'gemini' | 'openrouter') || 'gemini',
-      openRouterModel: localStorage.getItem('openrouter_model') || 'nvidia/nemotron-3.5-lightning:free'
+      openRouterModel: localStorage.getItem('openrouter_model') || 'nvidia/nemotron-3.5-lightning:free',
+      transcriptionEngine: (localStorage.getItem('transcription_engine') as 'gemini' | 'assembly') || 'gemini'
     };
   });
   
@@ -45,6 +57,7 @@ export default function App() {
     localStorage.setItem('custom_ai_prompt', newSettings.customPrompt);
     localStorage.setItem('ai_provider', newSettings.aiProvider);
     localStorage.setItem('openrouter_model', newSettings.openRouterModel);
+    localStorage.setItem('transcription_engine', newSettings.transcriptionEngine);
   };
 
   const handlePauseTranscription = useCallback(async (partialFile: File) => {
@@ -55,7 +68,7 @@ export default function App() {
     setTranscriptionStatus('Transcrevendo trecho parcial...');
 
     try {
-      const result = await transcribeAudio(partialFile, '', settings.language, setTranscriptionStatus);
+      const result = await transcribeAudio(partialFile, '', settings.language, setTranscriptionStatus, settings.transcriptionEngine);
       setTranscription(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ocorreu um erro inesperado durante a transcrição parcial.');
@@ -88,7 +101,7 @@ export default function App() {
     setTranscriptionStatus('Iniciando transcrição final...');
 
     try {
-      const result = await transcribeAudio(file, '', settings.language, setTranscriptionStatus);
+      const result = await transcribeAudio(file, '', settings.language, setTranscriptionStatus, settings.transcriptionEngine);
       setTranscription(result);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ocorreu um erro inesperado durante a transcrição.');

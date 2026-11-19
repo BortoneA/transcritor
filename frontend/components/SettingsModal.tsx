@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { X, Save, Key, Globe, MessageSquare, Settings2, BrainCircuit, Activity } from 'lucide-react';
+import { X, Save, Key, Globe, MessageSquare, Settings2, BrainCircuit, Activity, Mic, Users, Zap } from 'lucide-react';
 import { DEFAULT_SYSTEM_INSTRUCTION } from '../services/geminiService';
 
 export interface AppSettings {
@@ -7,6 +7,7 @@ export interface AppSettings {
   customPrompt: string;
   aiProvider: 'gemini' | 'openrouter';
   openRouterModel: string;
+  transcriptionEngine: 'gemini' | 'assembly';
 }
 
 interface SettingsModalProps {
@@ -94,6 +95,27 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose, s
           
           {activeTab === 'geral' && (
             <div className="space-y-6 animate-in fade-in slide-in-from-left-4 duration-300">
+              {/* Motor de Transcrição */}
+              <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
+                <label className="flex items-center text-sm font-bold text-slate-700 mb-3">
+                  <Mic size={16} className="mr-2 text-blue-500" />
+                  Motor de Transcrição de Áudio
+                </label>
+                <select
+                  value={localSettings.transcriptionEngine}
+                  onChange={(e) => setLocalSettings({ ...localSettings, transcriptionEngine: e.target.value as 'gemini' | 'assembly' })}
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-sm text-slate-800 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all appearance-none"
+                >
+                  <option value="gemini">Gemini 2.5 Flash Multimodal (Ultrarrápido / Direto)</option>
+                  <option value="assembly">AssemblyAI (com Diarização e Identificação de Falantes)</option>
+                </select>
+                <p className="text-xs text-slate-500 mt-2">
+                  {localSettings.transcriptionEngine === 'gemini'
+                    ? 'Transcreve o áudio diretamente pela API multimodal do Gemini em poucos segundos.'
+                    : 'Processa o áudio identificando a alternância entre Médico e Paciente (Diarização de Falantes).'}
+                </p>
+              </div>
+
               {/* Provedor de IA */}
               <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-sm">
                 <label className="flex items-center text-sm font-bold text-slate-700 mb-3">
