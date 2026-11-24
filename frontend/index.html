@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Gemini AI Transcriber</title>
+    <title>MedScribe - Transcrição & Prontuário Clínico Inteligente</title>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
@@ -54,6 +54,25 @@
       body {
         -webkit-font-smoothing: antialiased;
         -moz-osx-font-smoothing: grayscale;
+      }
+
+      /* Estilização otimizada para Impressão e PDF */
+      @media print {
+        header, .print\:hidden, button {
+          display: none !important;
+        }
+        body, main {
+          background: white !important;
+          color: black !important;
+          padding: 0 !important;
+          margin: 0 !important;
+        }
+        .lg\:col-span-4 {
+          display: none !important;
+        }
+        .lg\:col-span-8 {
+          width: 100% !important;
+        }
       }
     </style>
   </head>

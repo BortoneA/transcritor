@@ -1,10 +1,13 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { Mic, AlertCircle, Sparkles, RotateCcw, FileAudio, Stethoscope, User, Calendar, Clock, ChevronRight, BrainCircuit, Activity, CheckCircle2, Settings, MessageSquarePlus } from 'lucide-react';
+import { Mic, AlertCircle, Sparkles, RotateCcw, FileAudio, Stethoscope, User, Calendar, Clock, ChevronRight, BrainCircuit, Activity, CheckCircle2, Settings, MessageSquarePlus, History } from 'lucide-react';
 import { TranscriptionResult } from './components/TranscriptionResult';
 import { AudioRecorder } from './components/AudioRecorder';
 import { MedicalRecordGrid } from './components/MedicalRecordGrid';
 import { SettingsModal, AppSettings } from './components/SettingsModal';
 import { EditRecordModal } from './components/EditRecordModal';
+import { AudioPlayerBar } from './components/AudioPlayerBar';
+import { ConsultationHistoryModal } from './components/ConsultationHistoryModal';
+import { saveConsultation, getConsultation } from './services/storageService';
 import { transcribeAudio, generateMedicalRecord, editMedicalRecord, MedicalRecord, DEFAULT_SYSTEM_INSTRUCTION } from './services/geminiService';
 
 export default function App() {
@@ -12,6 +15,11 @@ export default function App() {
   const [file, setFile] = useState<File | null>(null);
   const [isRecordingActive, setIsRecordingActive] = useState(false);
   
+  // History & Consultation tracking
+  const [consultationId, setConsultationId] = useState<string>(() => Date.now().toString());
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false);
+  const [isSavedToast, setIsSavedToast] = useState(false);
+
   // Settings State
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(() => {
@@ -51,6 +59,67 @@ export default function App() {
 
   const [error, setError] = useState<string | null>(null);
 
+  // Auto-save no IndexedDB
+  const persistConsultation = useCallback(async (
+    customFile?: File | null,
+    customTranscription?: string | null,
+    customRecord?: MedicalRecord | null,
+    customPatientName?: string
+  ) => {
+    try {
+      const activeFile = customFile !== undefined ? customFile : file;
+      const activeTranscription = customTranscription !== undefined ? customTranscription : transcription;
+      const activeRecord = customRecord !== undefined ? customRecord : medicalRecord;
+      const activePatient = customPatientName !== undefined ? customPatientName : patientName;
+
+      if (!activeFile && !activeTranscription && !activeRecord) return;
+
+      await saveConsultation({
+        id: consultationId,
+        patientName: activePatient && activePatient.trim() ? activePatient.trim() : 'Consulta sem identificação',
+        createdAt: Number(consultationId) || Date.now(),
+        updatedAt: Date.now(),
+        audioBlob: activeFile || undefined,
+        audioFileName: activeFile?.name,
+        audioMimeType: activeFile?.type,
+        transcription: activeTranscription || undefined,
+        medicalRecord: activeRecord || undefined,
+      });
+
+      setIsSavedToast(true);
+      setTimeout(() => setIsSavedToast(false), 2500);
+    } catch (err) {
+      console.warn('Erro ao salvar no IndexedDB:', err);
+    }
+  }, [consultationId, file, transcription, medicalRecord, patientName]);
+
+  const handleSelectConsultation = async (id: string) => {
+    try {
+      const saved = await getConsultation(id);
+      if (!saved) return;
+
+      setConsultationId(saved.id);
+      setPatientName(saved.patientName === 'Consulta sem identificação' ? '' : saved.patientName);
+
+      if (saved.audioBlob) {
+        const restored = new File(
+          [saved.audioBlob],
+          saved.audioFileName || 'audio-consulta.webm',
+          { type: saved.audioMimeType || saved.audioBlob.type || 'audio/webm' }
+        );
+        setFile(restored);
+      } else {
+        setFile(null);
+      }
+
+      setTranscription(saved.transcription || null);
+      setMedicalRecord(saved.medicalRecord || null);
+      setError(null);
+    } catch (err) {
+      setError('Falha ao restaurar consulta do histórico local.');
+    }
+  };
+
   const handleSaveSettings = (newSettings: AppSettings) => {
     setSettings(newSettings);
     localStorage.setItem('transcription_lang', newSettings.language);
@@ -70,18 +139,20 @@ export default function App() {
     try {
       const result = await transcribeAudio(partialFile, '', settings.language, setTranscriptionStatus, settings.transcriptionEngine);
       setTranscription(result);
+      persistConsultation(partialFile, result, medicalRecord, patientName);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ocorreu um erro inesperado durante a transcrição parcial.');
     } finally {
       setIsTranscribing(false);
       setTranscriptionStatus('');
     }
-  }, [settings]);
+  }, [settings, medicalRecord, patientName, persistConsultation]);
 
   const handleRecordingComplete = useCallback((recordedFile: File) => {
     setFile(recordedFile);
     setError(null);
-  }, []);
+    persistConsultation(recordedFile, transcription, medicalRecord, patientName);
+  }, [transcription, medicalRecord, patientName, persistConsultation]);
 
   const handleReset = useCallback(() => {
     setFile(null);
@@ -89,6 +160,8 @@ export default function App() {
     setMedicalRecord(null);
     setError(null);
     setIsRecordingActive(false);
+    setPatientName('');
+    setConsultationId(Date.now().toString());
   }, []);
 
   const handleTranscribe = async () => {
@@ -103,6 +176,7 @@ export default function App() {
     try {
       const result = await transcribeAudio(file, '', settings.language, setTranscriptionStatus, settings.transcriptionEngine);
       setTranscription(result);
+      persistConsultation(file, result, null, patientName);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ocorreu um erro inesperado durante a transcrição.');
     } finally {
@@ -125,6 +199,7 @@ export default function App() {
         settings.openRouterModel
       );
       setMedicalRecord(record);
+      persistConsultation(file, transcription, record, patientName);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Ocorreu um erro ao gerar o prontuário.');
     } finally {
@@ -147,6 +222,7 @@ export default function App() {
         settings.openRouterModel
       );
       setMedicalRecord(updatedRecord);
+      persistConsultation(file, transcription, updatedRecord, patientName);
       setIsEditModalOpen(false);
       setEditSuggestion('');
     } catch (err) {
@@ -167,6 +243,12 @@ export default function App() {
         onClose={() => setIsSettingsOpen(false)} 
         settings={settings}
         onSave={handleSaveSettings}
+      />
+
+      <ConsultationHistoryModal
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+        onSelectConsultation={handleSelectConsultation}
       />
 
       <EditRecordModal
@@ -193,20 +275,41 @@ export default function App() {
             </span>
           </div>
           
-          <div className="flex items-center space-x-4">
-            <div className="hidden md:flex items-center space-x-4 text-sm font-medium text-slate-500">
+          <div className="flex items-center space-x-3 sm:space-x-4">
+            {/* Indicador de Salvamento Automático */}
+            {isSavedToast && (
+              <span className="hidden md:inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-emerald-50 border border-emerald-200 px-3 py-1 rounded-full animate-in fade-in duration-300">
+                <CheckCircle2 size={13} className="text-emerald-500" />
+                <span>Salvo no histórico</span>
+              </span>
+            )}
+
+            <div className="hidden lg:flex items-center space-x-4 text-sm font-medium text-slate-500">
               <div className="flex items-center"><Calendar size={14} className="mr-1.5" /> {currentDate}</div>
               <div className="flex items-center"><Clock size={14} className="mr-1.5" /> {currentTime}</div>
             </div>
+
             <div className="flex items-center space-x-2 px-3 py-1.5 bg-indigo-50 border border-indigo-100 rounded-full">
               <Sparkles size={14} className="text-indigo-600" />
               <span className="text-xs font-bold text-indigo-700 hidden sm:inline">
                 {settings.aiProvider === 'gemini' 
-                  ? 'Gemini 2.5 Flash Lite' 
+                  ? 'Gemini 2.5 Flash' 
                   : `OpenRouter: ${settings.openRouterModel.split('/').pop()?.replace(':free', '') || 'Nemotron'}`
                 }
               </span>
             </div>
+
+            {/* Botão de Histórico */}
+            <button
+              onClick={() => setIsHistoryOpen(true)}
+              className="flex items-center space-x-1.5 px-3 py-1.5 text-slate-700 hover:text-blue-600 hover:bg-blue-50 bg-slate-50 border border-slate-200 hover:border-blue-200 rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95"
+              title="Histórico de Consultas Salvas"
+            >
+              <History size={15} />
+              <span className="hidden sm:inline">Histórico</span>
+            </button>
+
+            {/* Botão de Configurações */}
             <button 
               onClick={() => setIsSettingsOpen(true)}
               className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-full transition-colors"
@@ -267,20 +370,19 @@ export default function App() {
 
             {/* File Status & Transcribe Action */}
             {!isRecordingActive && file && (
-              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm animate-in fade-in slide-in-from-bottom-4">
-                <h3 className="text-sm font-bold text-slate-800 mb-3 flex items-center">
-                  <FileAudio size={16} className="mr-2 text-blue-500" />
-                  Arquivo Selecionado
-                </h3>
-                <div className="bg-slate-50 border border-slate-100 rounded-xl p-3 mb-4">
-                  <p className="text-sm font-medium text-slate-700 truncate" title={file.name}>{file.name}</p>
-                  <div className="flex justify-between items-center mt-2 text-xs text-slate-500">
-                    <span>{(file.size / 1024 / 1024).toFixed(2)} MB</span>
-                    <button onClick={handleReset} className="text-red-500 hover:text-red-700 font-medium flex items-center">
-                      <RotateCcw size={12} className="mr-1" /> Descartar
-                    </button>
-                  </div>
+              <div className="bg-white rounded-2xl border border-slate-200 p-5 shadow-sm animate-in fade-in slide-in-from-bottom-4 flex flex-col gap-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-sm font-bold text-slate-800 flex items-center">
+                    <FileAudio size={16} className="mr-2 text-blue-500" />
+                    Áudio da Consulta
+                  </h3>
+                  <button onClick={handleReset} className="text-xs text-red-500 hover:text-red-700 font-semibold flex items-center gap-1">
+                    <RotateCcw size={12} /> Descartar
+                  </button>
                 </div>
+
+                {/* Player de Áudio com Velocidade e Scrubber */}
+                <AudioPlayerBar file={file} fileName={file.name} onClearAudio={handleReset} />
 
                 <button
                   onClick={handleTranscribe}
@@ -439,7 +541,7 @@ export default function App() {
                         </button>
                       )}
                     </div>
-                    <MedicalRecordGrid record={medicalRecord} isLoading={isGeneratingRecord || isEditingRecord} />
+                    <MedicalRecordGrid record={medicalRecord} isLoading={isGeneratingRecord || isEditingRecord} patientName={patientName} />
                   </div>
                 )}
               </div>
