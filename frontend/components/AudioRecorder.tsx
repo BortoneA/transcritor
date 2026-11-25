@@ -12,8 +12,12 @@ type RecordMode = 'presencial' | 'telemedicina';
 type AudioQuality = 'low' | 'medium' | 'high';
 
 export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onRecordingStart, onRecordingComplete, onRecordingPause, disabled }) => {
-  const [mode, setMode] = useState<RecordMode>('telemedicina');
-  const [quality, setQuality] = useState<AudioQuality>('low');
+  const [mode, setMode] = useState<RecordMode>(() => {
+    return (localStorage.getItem('recording_mode') as RecordMode) || 'presencial';
+  });
+  const [quality, setQuality] = useState<AudioQuality>(() => {
+    return (localStorage.getItem('recording_quality') as AudioQuality) || 'low';
+  });
   const [isRecording, setIsRecording] = useState(false);
   const [isPaused, setIsPaused] = useState(false);
   const [recordingTime, setRecordingTime] = useState(0);
@@ -370,7 +374,10 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onRecordingStart, 
         {/* Mode Selection Tabs */}
         <div className="flex p-1 bg-slate-100 rounded-xl">
           <button
-            onClick={() => setMode('telemedicina')}
+            onClick={() => {
+              setMode('telemedicina');
+              localStorage.setItem('recording_mode', 'telemedicina');
+            }}
             disabled={isRecording}
             className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-3 rounded-lg text-sm font-bold transition-all ${
               mode === 'telemedicina' 
@@ -382,7 +389,10 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onRecordingStart, 
             <span>Telemedicina</span>
           </button>
           <button
-            onClick={() => setMode('presencial')}
+            onClick={() => {
+              setMode('presencial');
+              localStorage.setItem('recording_mode', 'presencial');
+            }}
             disabled={isRecording}
             className={`flex-1 flex items-center justify-center space-x-2 py-2.5 px-3 rounded-lg text-sm font-bold transition-all ${
               mode === 'presencial' 
@@ -460,7 +470,11 @@ export const AudioRecorder: React.FC<AudioRecorderProps> = ({ onRecordingStart, 
           <div className="relative">
             <select 
               value={quality}
-              onChange={(e) => setQuality(e.target.value as AudioQuality)}
+              onChange={(e) => {
+                const val = e.target.value as AudioQuality;
+                setQuality(val);
+                localStorage.setItem('recording_quality', val);
+              }}
               disabled={isRecording || disabled}
               className="w-full appearance-none bg-slate-50 border border-slate-200 text-slate-700 text-sm rounded-xl px-4 py-2.5 pr-8 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all disabled:opacity-60 disabled:cursor-not-allowed"
             >
